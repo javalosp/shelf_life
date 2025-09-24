@@ -1,0 +1,8 @@
+category_code,category_name,shelf_life_pred_days,dominant_model
+C,Crackers,125.17013682606576,moisture gain
+D,Sweet biscuit,149.86733174659662,moisture gain
+F,Cream filling,1839.9030500089048,lipid oxidation
+O,Snack (oil),624.5541142852837,lipid oxidation
+P,Baked snack,185.22946219637535,moisture gain
+S,Sandwich biscuit,137.50809520578548,moisture gain
+W,Sugar Wafers,468.4546442349413,lipid oxidation

@@ -1,0 +1,19 @@
+#Load Conda
+eval "$(~/miniforge3/bin/conda shell.bash hook)"
+
+# Create a new environment for general testing (suitable for most applications) named 'general_venv'
+# with Python and the required build tools
+conda create --name general_venv python=3.9 gxx_linux-64 cmake -c conda-forge -y
+
+# Activate the new environment
+conda activate general_venv
+
+# Update pip
+pip install --upgrade pip
+
+# Install required libraries
+pip install -r requirements.txt
+
+# Install jupyterlab kernel (for running notebooks)
+python -m ipykernel install --user --name general_venv --display-name "general_venv (kernel)"
+
