@@ -1,0 +1,1538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shelf Life Predictor Pro</title>
+    
+    <!-- 1. Load Tailwind CSS (Styling) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- 2. Load React & ReactDOM (UMD Globals) -->
+    <script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+    
+    <!-- 3. Load Prop-Types (Required dependency for Recharts UMD) -->
+    <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+
+    <!-- 4. Load Recharts (Charting Library) -->
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- 5. Load Babel (To compile JSX in browser) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- 6. PDF Generation Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+    <style>
+        /* Print styles for report generation */
+        @media print {
+            header, .no-print { display: none !important; }
+            main { display: block !important; padding: 0 !important; }
+            body { font-size: 12px; background: white; }
+            .recharts-tooltip-cursor { display: none; }
+        }
+        
+        /* Custom Tooltip Styles */
+        .tooltip-container { position: relative; display: inline-flex; align-items: center; }
+        .tooltip-text {
+            visibility: hidden;
+            width: 220px;
+            background-color: #334155;
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 8px;
+            position: absolute;
+            z-index: 50;
+            bottom: 150%; 
+            left: 50%;
+            margin-left: -110px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-size: 11px;
+            font-weight: normal;
+            line-height: 1.4;
+            pointer-events: none;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        .tooltip-text::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: #334155 transparent transparent transparent;
+        }
+        .tooltip-container:hover .tooltip-text { visibility: visible; opacity: 1; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // --- 0. INITIALIZATION & CHECKS ---
+        const React = window.React;
+        const ReactDOM = window.ReactDOM;
+        const Recharts = window.Recharts;
+
+        const missingLibs = [];
+        if (!React) missingLibs.push("React");
+        if (!ReactDOM) missingLibs.push("ReactDOM");
+        if (!Recharts) missingLibs.push("Recharts");
+
+        if (missingLibs.length > 0) {
+            document.getElementById('root').innerHTML = `
+                <div class="p-8 text-center">
+                    <h1 class="text-2xl font-bold text-red-600 mb-4">Library Loading Error</h1>
+                    <p class="text-slate-600">The following libraries failed to load:</p>
+                    <code class="block bg-slate-100 p-2 my-4 rounded">${missingLibs.join(", ")}</code>
+                </div>
+            `;
+            throw new Error(`Libraries missing: ${missingLibs.join(", ")}`);
+        }
+
+        // --- 1. DESTRUCTURING GLOBALS ---
+        const { useState, useEffect, useMemo, useRef } = React;
+        
+        const { 
+            LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip: RechartsTooltip, 
+            Legend, ResponsiveContainer, ReferenceLine, ReferenceDot, Area, ComposedChart, Scatter, BarChart, Bar, Cell 
+        } = Recharts;
+
+        // Inline Icons
+        const Icons = {
+            Activity: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>,
+            AlertTriangle: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>,
+            Box: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22.08V12"/></svg>,
+            ChevronRight: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>,
+            ClipboardCheck: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></svg>,
+            CloudFog: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M16 17H7"/><path d="M17 21H9"/></svg>,
+            Copy: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>,
+            Download: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>,
+            Droplets: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7 16.3c2.2 0 4-1.83 4-4.05 0-1.16-.57-2.26-1.71-3.19S7.29 6.75 7 5.3c-.29 1.45-1.14 2.8-2.29 3.76S3 11.1 3 12.25c0 2.22 1.8 4.05 4 4.05z"/><path d="M12.56 6.6A10.97 10.97 0 0 0 14 3.02c.5 2.5 2 4.9 4 6.5s3 3.5 3 5.5a6.98 6.98 0 0 1-11.91 4.97"/></svg>,
+            Edit3: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>,
+            FileText: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/></svg>,
+            FlaskConical: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/></svg>,
+            GitMerge: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg>,
+            Info: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>,
+            Layers: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg>,
+            Lightbulb: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-1 1.5-2.4 1.5-3.8 0-3.3-2.7-6-6-6S6 4.7 6 8c0 1.4.5 2.8 1.5 3.8.8.8 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>,
+            RefreshCw: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>,
+            Repeat: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>,
+            Save: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>,
+            Settings: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.35a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>,
+            Sigma: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 7V4H6l6 8-6 8h12v-3"/></svg>,
+            Thermometer: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"/></svg>,
+            Trash2: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>,
+            Upload: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>,
+            HelpCircle: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+        };
+        
+        const { 
+            Settings, Thermometer, Box, Droplets, Activity, AlertTriangle, Save, Info, 
+            ChevronRight, Layers, CloudFog, Lightbulb, RefreshCw, FileText, ClipboardCheck, 
+            FlaskConical, Download, Edit3, Repeat, GitMerge, Copy, Upload, Trash2, Sigma, HelpCircle
+        } = Icons;
+
+        // Custom Tooltip Component
+        const InfoTooltip = ({ text }) => (
+            <div className="tooltip-container ml-2 cursor-help">
+                <HelpCircle className="w-3.5 h-3.5 text-slate-400 hover:text-slate-600" />
+                <span className="tooltip-text">{text}</span>
+            </div>
+        );
+
+        // --- 2. DATA CONSTANTS ---
+        const R = 8.314; // J/mol·K
+
+        const GAB_DATA = {
+            'C': { Wm: 0.03837, C: 9.8737, K: 0.8455 },
+            'D': { Wm: 0.04930, C: 1.7842, K: 0.9354 },
+            'P': { Wm: 0.05631, C: 0.5418, K: 0.9893 },
+            'S': { Wm: 0.03672, C: 2.4512, K: 1.0018 },
+            'Custom': { Wm: 0.05, C: 10, K: 0.9 }
+        };
+
+        const OX_DATA = {
+            'C': { Ea: 77208, k0: 6.418e9 },
+            'D': { Ea: 88901, k0: 2.802e11 },
+            'F': { Ea: 111919, k0: 9.194e14 },
+            'O': { Ea: 103127, k0: 7.805e13 },
+            'S': { Ea: 81555, k0: 2.439e10 },
+            'W': { Ea: 88828, k0: 3.251e11 },
+            'Custom': { Ea: 80000, k0: 1e10 }
+        };
+
+        const CATEGORIES = Array.from(new Set([...Object.keys(GAB_DATA), ...Object.keys(OX_DATA)])).sort();
+
+        const CATEGORY_NAMES = {
+            'C': 'Crackers',
+            'D': 'Sweet plain biscuit',
+            'F': 'Cream filling',
+            'G': 'Cracker/biscuit (Fat)',
+            'O': 'Cracker/biscuit (oil)',
+            'P': 'Baked snack',
+            'S': 'Sandwich biscuit',
+            'W': 'Sugar Wafers',
+            'Custom': 'User Defined Model'
+        };
+
+        const RAW_MOISTURE_DATA = {
+            'D': [{ aw: 0.391, m: 0.0456 }, { aw: 0.420, m: 0.0461 }, { aw: 0.413, m: 0.0466 }, { aw: 0.444, m: 0.0504 }, { aw: 0.468, m: 0.0542 }, { aw: 0.500, m: 0.0600 }, { aw: 0.650, m: 0.1100 }, { aw: 0.750, m: 0.1800 }],
+            'P': [{ aw: 0.597, m: 0.0584 }, { aw: 0.605, m: 0.0604 }, { aw: 0.622, m: 0.0654 }, { aw: 0.639, m: 0.0708 }, { aw: 0.659, m: 0.0779 }, { aw: 0.683, m: 0.0890 }, { aw: 0.701, m: 0.0979 }],
+            'C': [{ aw: 0.2, m: 0.03 }, { aw: 0.4, m: 0.05 }, { aw: 0.6, m: 0.09 }, { aw: 0.7, m: 0.12 }],
+            'S': [{ aw: 0.2, m: 0.02 }, { aw: 0.4, m: 0.04 }, { aw: 0.6, m: 0.08 }, { aw: 0.7, m: 0.11 }]
+        };
+
+        const RAW_OXIDATION_DATA = {
+            'C': [{ t: 110, ip: 19.1 }, { t: 110, ip: 15.1 }, { t: 100, ip: 1.76 }, { t: 90, ip: 15.8 }, { t: 90, ip: 4.45 }, { t: 90, ip: 10.6 }],
+            'S': [{ t: 110, ip: 11.5 }, { t: 110, ip: 11.7 }, { t: 100, ip: 1.28 }, { t: 100, ip: 1.66 }],
+            'O': [{ t: 110, ip: 15.3 }, { t: 110, ip: 16.9 }, { t: 90, ip: 6.5 }],
+            'D': [{ t: 40, ip: 3000 }, { t: 60, ip: 500 }, { t: 80, ip: 80 }],
+            'F': [{ t: 40, ip: 5000 }, { t: 60, ip: 800 }, { t: 80, ip: 120 }],
+            'W': [{ t: 40, ip: 4000 }, { t: 60, ip: 600 }, { t: 80, ip: 100 }]
+        };
+
+        // --- 3. HELPER FUNCTIONS ---
+
+        const T_kelvin_from_C = (c) => c + 273.15;
+
+        // Box-Muller Random
+        const randn_bm = () => {
+            let u = 0, v = 0;
+            while(u === 0) u = Math.random(); 
+            while(v === 0) v = Math.random();
+            return Math.sqrt( -2.0 * Math.log( u ) ) * Math.cos( 2.0 * Math.PI * v );
+        }
+
+        const calculateWVTRatTemp = (wvtrRef, tempC, refTempC, Ep) => {
+            if (!wvtrRef || wvtrRef <= 0) return 0;
+            const Ep_J = Ep * 1000;
+            const T = T_kelvin_from_C(tempC);
+            const T_ref = T_kelvin_from_C(refTempC);
+            return wvtrRef * Math.exp((-Ep_J / R) * (1/T - 1/T_ref));
+        };
+
+        const adjustGABParams = (params, tempC, refTempC = 25, dHc = 0, dHk = 0) => {
+            if (!params) return null;
+            const { Wm, C, K } = params;
+            if (dHc === 0 && dHk === 0) return params;
+            const T = T_kelvin_from_C(tempC);
+            const T_ref = T_kelvin_from_C(refTempC);
+            const exponent = (1/T - 1/T_ref) / R;
+            const C_adj = C * Math.exp((dHc * 1000) * exponent);
+            const K_adj = K * Math.exp((dHk * 1000) * exponent);
+            return { Wm, C: C_adj, K: K_adj };
+        };
+
+        const calculateGABMoisture = (aw, params) => {
+            if (!params) return 0;
+            const { Wm, C, K } = params;
+            const numerator = Wm * C * K * aw;
+            const denominator = (1 - K * aw) * (1 - K * aw + C * K * aw);
+            return numerator / denominator;
+        };
+
+        const calculateAwFromMoisture = (M, params) => {
+            let low = 0, high = 0.99;
+            for(let i=0; i<20; i++) {
+                const mid = (low+high)/2;
+                const m_mid = calculateGABMoisture(mid, params);
+                if(m_mid < M) low = mid; else high = mid;
+            }
+            return (low+high)/2;
+        };
+
+        const calculateLinearizedGAB = (aw, params) => {
+            const M = calculateGABMoisture(aw, params);
+            return M > 0 ? aw / M : null;
+        };
+
+        const calculateMoistureShelfLife = (inputs, gabParams, rmse) => {
+            if (!gabParams) return null;
+            const { Ws, A, aw0, awc, rh, temp, wvtrRefTemp, Ep, effectiveWVTR_Ref } = inputs;
+            
+            const WVTR_T = calculateWVTRatTemp(effectiveWVTR_Ref, temp, wvtrRefTemp, Ep);
+            const result = { val: 0, min: 0, max: 0, adjustedWVTR: WVTR_T || 0 };
+
+            if (!WVTR_T || WVTR_T <= 0) return result;
+            
+            const rh_frac = rh / 100;
+            if (rh_frac <= awc) {
+                result.val = Infinity;
+                result.min = Infinity;
+                result.max = Infinity;
+                return result;
+            } 
+
+            const m_wc = calculateGABMoisture(awc, gabParams);
+            const m_w0 = calculateGABMoisture(aw0, gabParams);
+            
+            if (m_wc <= m_w0) return result;
+
+            const D0 = rh_frac - aw0;
+            const Dc = rh_frac - awc;
+            if (D0 <= 0 || Dc <= 0) return result; 
+
+            const drivingForce_LM = (D0 - Dc) / Math.log(D0 / Dc);
+            
+            const t_base = (Ws * (m_wc - m_w0)) / (A * WVTR_T * drivingForce_LM);
+            
+            const m_wc_min = Math.max(0, m_wc - rmse);
+            const m_wc_max = m_wc + rmse;
+            const m_w0_min = Math.max(0, m_w0 - rmse);
+            const m_w0_max = m_w0 + rmse;
+            
+            const delta_M_min = Math.max(0, m_wc_min - m_w0_max);
+            const t_min = (Ws * delta_M_min) / (A * WVTR_T * drivingForce_LM);
+            
+            const delta_M_max = m_wc_max - m_w0_min;
+            const t_max = (Ws * delta_M_max) / (A * WVTR_T * drivingForce_LM);
+
+            return { val: t_base, min: t_min, max: t_max, adjustedWVTR: WVTR_T };
+        };
+
+        const calculateOxidationShelfLife = (tempC, oxParams, rmse_days) => {
+            if (!oxParams) return null;
+            const { Ea, k0 } = oxParams;
+            const tempK = tempC + 273.15;
+            const ip_hours = (1 / k0) * Math.exp(Ea / (R * T_kelvin_from_C(tempC)));
+            const t_base = ip_hours / 24; 
+            
+            const t_min = Math.max(0, t_base - rmse_days); 
+            const t_max = t_base + rmse_days;
+            
+            return { val: t_base, min: t_min, max: t_max };
+        };
+
+        const calculateRMSE = (modelFn, rawData, xKey, yKey, params) => {
+            if (!rawData || rawData.length === 0) return 0;
+            let sumSqErr = 0;
+            let n = 0;
+            rawData.forEach(point => {
+                const x = point[xKey];
+                const y_obs = point[yKey];
+                let y_pred = 0;
+                if (yKey === 'ip') {
+                    const { Ea, k0 } = params;
+                    const ip_hours = (1 / k0) * Math.exp(Ea / (R * T_kelvin_from_C(x)));
+                    y_pred = ip_hours / 24; 
+                }
+                else y_pred = modelFn(x, params);
+                
+                const y_obs_days = yKey === 'ip' ? y_obs / 24 : y_obs;
+                if (!isNaN(y_pred)) {
+                    const diff = y_obs_days - y_pred;
+                    sumSqErr += diff * diff;
+                    n++;
+                }
+            });
+            return n === 0 ? 0 : Math.sqrt(sumSqErr / n);
+        };
+
+        const runMonteCarlo = (baseInputs, gabBase, oxParams, iterations = 1000, variability) => {
+            const results = [];
+            const { tempVar, rhVar, wvtrVar, aw0Var } = variability;
+
+            for (let i = 0; i < iterations; i++) {
+                // Sample stochastic inputs
+                const simTemp = baseInputs.temp + (tempVar * randn_bm()); 
+                const simRH = baseInputs.rh + (rhVar * randn_bm()); 
+                
+                // Multiplicative variance for WVTR
+                const wvtrFactor = 1 + ((wvtrVar / 100) * randn_bm());
+                const simWVTR_Ref = baseInputs.effectiveWVTR_Ref * Math.max(0.1, wvtrFactor);
+
+                const simAw0 = Math.max(0, Math.min(0.99, baseInputs.aw0 + (aw0Var * randn_bm())));
+
+                const simInputs = {
+                    ...baseInputs,
+                    temp: simTemp,
+                    rh: simRH,
+                    effectiveWVTR_Ref: simWVTR_Ref,
+                    aw0: simAw0
+                };
+
+                const simGAB = adjustGABParams(gabBase, simTemp, 25, baseInputs.dHc, baseInputs.dHk);
+                const mRes = calculateMoistureShelfLife(simInputs, simGAB, 0); 
+                const oxRes = calculateOxidationShelfLife(simTemp, oxParams, 0);
+
+                let life = 0;
+
+                if (mRes.val === Infinity) {
+                    life = oxRes ? oxRes.val : 5000; 
+                } else {
+                    if (oxRes && mRes.val > oxRes.val) {
+                        life = oxRes.val;
+                    } else {
+                        life = mRes.val;
+                    }
+                }
+                
+                // Filter crazy outliers if any
+                if (life > 0 && life < 5000) {
+                    results.push(life);
+                }
+            }
+            
+            // Sort for percentiles
+            results.sort((a,b) => a-b);
+            const p10 = results[Math.floor(results.length * 0.1)] || 0;
+            const p50 = results[Math.floor(results.length * 0.5)] || 0;
+            const p90 = results[Math.floor(results.length * 0.9)] || 0;
+            
+            // Histogram Data
+            const minVal = results[0] || 0;
+            const maxVal = results[results.length-1] || 0;
+            const bucketCount = 20;
+            const bucketSize = (maxVal - minVal) / bucketCount || 1;
+            const histogram = [];
+            
+            for(let b=0; b<bucketCount; b++) {
+                const start = minVal + b*bucketSize;
+                const end = start + bucketSize;
+                const count = results.filter(v => v >= start && v < end).length;
+                histogram.push({ range: `${Math.round(start)}-${Math.round(end)}`, count, start });
+            }
+
+            return { p10, p50, p90, histogram, count: results.length };
+        };
+
+        const simulateCycling = (steps, inputs, gabBase, oxParams) => {
+            if (!gabBase) return null;
+
+            const { wvtrPrimary, wvtrSecondary, isDoubleLayer } = inputs;
+            let effWVTR_Ref = wvtrPrimary;
+            if (isDoubleLayer && wvtrSecondary > 0) {
+                effWVTR_Ref = (wvtrPrimary * wvtrSecondary) / (wvtrPrimary + wvtrSecondary);
+            }
+
+            let currentM = calculateGABMoisture(inputs.aw0, gabBase); 
+            let currentOxFraction = 0; 
+            
+            let history = [];
+            let totalDays = 0;
+            let failed = false;
+            let failMode = null;
+
+            history.push({ day: 0, aw: inputs.aw0, ox: 0, temp: steps[0].temp });
+
+            for (let step of steps) {
+                const { temp, rh, days } = step;
+                
+                const stepGAB = adjustGABParams(gabBase, temp, 25, inputs.dHc, inputs.dHk);
+                const stepWVTR = calculateWVTRatTemp(effWVTR_Ref, temp, inputs.wvtrRefTemp, inputs.Ep);
+                
+                const oxRes = calculateOxidationShelfLife(temp, oxParams, 0);
+                const stepOxLife = oxRes ? oxRes.val : Infinity;
+                
+                for (let d = 0; d < days; d++) {
+                    totalDays += 1;
+                    
+                    const currentAw = calculateAwFromMoisture(currentM, stepGAB);
+                    const drivingForce = (rh / 100) - currentAw;
+                    
+                    const flux = stepWVTR * drivingForce; 
+                    const dM = (flux * inputs.A) / inputs.Ws;
+                    
+                    currentM += dM;
+                    
+                    if (stepOxLife !== Infinity) {
+                        const dOx = 1 / stepOxLife;
+                        currentOxFraction += dOx;
+                    }
+                    
+                    history.push({ day: totalDays, aw: currentAw, ox: currentOxFraction * 100, temp: temp });
+
+                    if (currentAw >= inputs.awc) {
+                        failed = true; failMode = "Moisture"; break;
+                    }
+                    if (currentOxFraction >= 1.0) {
+                        failed = true; failMode = "Oxidation"; break;
+                    }
+                }
+                if (failed) break;
+            }
+            
+            return { 
+                totalDays, failed, failMode, history, 
+                finalAw: history[history.length-1]?.aw,
+                finalOx: history[history.length-1]?.ox
+            };
+        };
+
+        const analyzeIsotherm = (params) => {
+            if (!params) return null;
+            const { C, K } = params;
+            if (C > 2) {
+                const aw_peak = (2 - C) / (2 * K * (1 - C));
+                if (aw_peak > 0.05 && aw_peak < 0.95) {
+                    return { type: 'Type II', suggestion: aw_peak, msg: 'Inflection point detected.' };
+                } else {
+                    return { type: 'Type II', suggestion: null, msg: 'Peak outside normal range.' };
+                }
+            } else {
+                return { type: 'Type III', suggestion: null, msg: 'Isotherm is convex.' };
+            }
+        };
+
+        // --- 4. REACT APP COMPONENT ---
+        const App = () => {
+
+            const [category, setCategory] = useState('C');
+            const [inputs, setInputs] = useState({
+                temp: 25, rh: 75, Ws: 50, A: 0.05, 
+                wvtrPrimary: 1.5, wvtrSecondary: 0, isDoubleLayer: false,
+                wvtrRefTemp: 38, Ep: 45, dHc: 0, dHk: 0, aw0: 0.20, awc: 0.60       
+            });
+            
+            const [customGAB, setCustomGAB] = useState(GAB_DATA['Custom']);
+            const [customOx, setCustomOx] = useState(OX_DATA['Custom']);
+
+            const [showAdvancedKinetics, setShowAdvancedKinetics] = useState(false);
+            const [expDataInput, setExpDataInput] = useState('');
+            const [showExpData, setShowExpData] = useState(false);
+            const [showSim, setShowSim] = useState(false); 
+            const [simSteps, setSimSteps] = useState([{ temp: 30, rh: 80, days: 30 }, { temp: 20, rh: 60, days: 60 }]);
+            
+            const [compareMode, setCompareMode] = useState(false);
+            const [baselineInputs, setBaselineInputs] = useState(null);
+            const [baselineCategory, setBaselineCategory] = useState(null);
+
+            const [showMonteCarlo, setShowMonteCarlo] = useState(false);
+            const [mcVariability, setMcVariability] = useState({ tempVar: 2, rhVar: 5, wvtrVar: 10, aw0Var: 0.02 });
+
+            const [isExporting, setIsExporting] = useState(false); 
+            const [showReportModal, setShowReportModal] = useState(false);
+            const [reportMeta, setReportMeta] = useState({ productName: '', productId: '', notes: '' });
+
+            useEffect(() => {
+                const saved = localStorage.getItem('shelfLifeInputs');
+                if (saved) {
+                    try {
+                        const parsed = JSON.parse(saved);
+                        setInputs(prev => ({...prev, ...parsed}));
+                    } catch (e) { console.error("Load failed", e); }
+                }
+            }, []);
+
+            useEffect(() => {
+                localStorage.setItem('shelfLifeInputs', JSON.stringify(inputs));
+            }, [inputs]);
+
+            const numericInputs = useMemo(() => {
+                return Object.keys(inputs).reduce((acc, key) => {
+                    if (key === 'isDoubleLayer') {
+                        acc[key] = inputs[key];
+                    } else {
+                        const val = parseFloat(inputs[key]);
+                        acc[key] = isNaN(val) ? 0 : val;
+                    }
+                    return acc;
+                }, {});
+            }, [inputs]);
+
+            const gabParamsBase = useMemo(() => {
+                if (category === 'Custom') {
+                    return {
+                        Wm: parseFloat(customGAB.Wm) || 0,
+                        C: parseFloat(customGAB.C) || 0,
+                        K: parseFloat(customGAB.K) || 0
+                    };
+                }
+                return GAB_DATA[category];
+            }, [category, customGAB]);
+
+            const gabParams = useMemo(() => {
+                return adjustGABParams(gabParamsBase, numericInputs.temp, 25, numericInputs.dHc, numericInputs.dHk);
+            }, [gabParamsBase, numericInputs.temp, numericInputs.dHc, numericInputs.dHk]);
+
+            const oxParams = useMemo(() => {
+                if (category === 'Custom') {
+                    return {
+                        Ea: parseFloat(customOx.Ea) || 0,
+                        k0: parseFloat(customOx.k0) || 0
+                    };
+                }
+                return OX_DATA[category];
+            }, [category, customOx]);
+            
+            const gabRMSE = useMemo(() => {
+                if (category === 'Custom') return 0;
+                if(!gabParams || !RAW_MOISTURE_DATA[category]) return 0;
+                return calculateRMSE(calculateGABMoisture, RAW_MOISTURE_DATA[category], 'aw', 'm', gabParams);
+            }, [category, gabParams]);
+
+            const oxRMSE = useMemo(() => {
+                if (category === 'Custom') return 0;
+                if(!oxParams || !RAW_OXIDATION_DATA[category]) return 0;
+                return calculateRMSE(null, RAW_OXIDATION_DATA[category], 't', 'ip', oxParams);
+            }, [category, oxParams]);
+
+            const isothermAnalysis = useMemo(() => analyzeIsotherm(gabParams), [gabParams]);
+
+            const effectiveWVTR_Ref = useMemo(() => {
+                const { wvtrPrimary, wvtrSecondary, isDoubleLayer } = numericInputs;
+                if (!isDoubleLayer) return wvtrPrimary > 0 ? wvtrPrimary : 0;
+                if (wvtrPrimary > 0 && wvtrSecondary > 0) {
+                    return (wvtrPrimary * wvtrSecondary) / (wvtrPrimary + wvtrSecondary);
+                }
+                return 0; 
+            }, [numericInputs.wvtrPrimary, numericInputs.wvtrSecondary, numericInputs.isDoubleLayer]);
+
+            const shelfLifeMoisture = useMemo(() => {
+                const calcInputs = { ...numericInputs, effectiveWVTR_Ref };
+                return calculateMoistureShelfLife(calcInputs, gabParams, 2 * gabRMSE);
+            }, [numericInputs, gabParams, effectiveWVTR_Ref, gabRMSE]);
+            
+            const shelfLifeOxidation = useMemo(() => 
+                calculateOxidationShelfLife(numericInputs.temp, oxParams, 2 * oxRMSE), 
+            [numericInputs.temp, oxParams, oxRMSE]);
+            
+            let finalShelfLife = null;
+            let shelfLifeRange = null; 
+            let limitingFactor = "Unknown";
+            let displayMoisture = '---';
+            
+            const getVal = (res) => res?.val ?? res; 
+
+            if (getVal(shelfLifeMoisture) === Infinity) {
+                displayMoisture = '∞ (Safe)';
+                if (shelfLifeOxidation) {
+                    finalShelfLife = shelfLifeOxidation.val;
+                    shelfLifeRange = [shelfLifeOxidation.min, shelfLifeOxidation.max];
+                    limitingFactor = "Lipid Oxidation (Moisture Safe)";
+                } else {
+                    finalShelfLife = Infinity;
+                    limitingFactor = "Indefinite (Moisture Safe)";
+                }
+            } else {
+                displayMoisture = shelfLifeMoisture?.val ? Math.round(shelfLifeMoisture.val) + ' d' : 'N/A';
+                if (shelfLifeMoisture && shelfLifeOxidation) {
+                    if (shelfLifeMoisture.val === 0 && effectiveWVTR_Ref === 0) {
+                        if (shelfLifeOxidation) {
+                            finalShelfLife = shelfLifeOxidation.val;
+                            shelfLifeRange = [shelfLifeOxidation.min, shelfLifeOxidation.max];
+                            limitingFactor = "Lipid Oxidation (Perfect Barrier)";
+                        }
+                    } else {
+                        if (shelfLifeOxidation && shelfLifeMoisture.val < shelfLifeOxidation.val) {
+                            finalShelfLife = shelfLifeMoisture.val;
+                            shelfLifeRange = [shelfLifeMoisture.min, shelfLifeMoisture.max];
+                            limitingFactor = "Moisture Gain";
+                        } else if (shelfLifeOxidation) {
+                            finalShelfLife = shelfLifeOxidation.val;
+                            shelfLifeRange = [shelfLifeOxidation.min, shelfLifeOxidation.max];
+                            limitingFactor = "Lipid Oxidation";
+                        }
+                    }
+                } else if (shelfLifeMoisture) {
+                    finalShelfLife = shelfLifeMoisture.val;
+                    shelfLifeRange = [shelfLifeMoisture.min, shelfLifeMoisture.max];
+                    limitingFactor = "Moisture Gain (Oxidation data n/a)";
+                } else if (shelfLifeOxidation) {
+                    finalShelfLife = shelfLifeOxidation.val;
+                    shelfLifeRange = [shelfLifeOxidation.min, shelfLifeOxidation.max];
+                    limitingFactor = "Lipid Oxidation (Moisture data n/a)";
+                }
+            }
+
+            const baselineResults = useMemo(() => {
+                if (!compareMode || !baselineInputs) return null;
+                
+                const bCat = baselineCategory || category;
+                const bGabParamsBase = bCat === 'Custom' ? customGAB : GAB_DATA[bCat];
+                
+                const bNumeric = Object.keys(baselineInputs).reduce((acc, key) => {
+                    if (key === 'isDoubleLayer') acc[key] = baselineInputs[key];
+                    else acc[key] = parseFloat(baselineInputs[key]) || 0;
+                    return acc;
+                }, {});
+
+                const bGabParams = adjustGABParams(bGabParamsBase, bNumeric.temp, 25, bNumeric.dHc, bNumeric.dHk);
+                const bOxParams = bCat === 'Custom' ? customOx : OX_DATA[bCat];
+
+                let bEffWVTR = bNumeric.wvtrPrimary;
+                if (bNumeric.isDoubleLayer && bNumeric.wvtrSecondary > 0) {
+                    bEffWVTR = (bNumeric.wvtrPrimary * bNumeric.wvtrSecondary) / (bNumeric.wvtrPrimary + bNumeric.wvtrSecondary);
+                }
+
+                const bResM = calculateMoistureShelfLife({...bNumeric, effectiveWVTR_Ref: bEffWVTR}, bGabParams, 0);
+                const bResOx = calculateOxidationShelfLife(bNumeric.temp, bOxParams, 0);
+
+                let bFinal = 0;
+                if (bResM.val === Infinity) {
+                    bFinal = bResOx ? bResOx.val : Infinity;
+                } else {
+                    bFinal = bResOx ? Math.min(bResM.val, bResOx.val) : bResM.val;
+                }
+
+                return { val: bFinal, params: bGabParams, oxParams: bOxParams, inputs: bNumeric };
+            }, [compareMode, baselineInputs, baselineCategory, customGAB, customOx]);
+
+            const sensitivityData = useMemo(() => {
+                if (!finalShelfLife || finalShelfLife === Infinity || finalShelfLife === 0) return [];
+                
+                const runCalc = (modInputs) => {
+                    let effWVTR = modInputs.wvtrPrimary; 
+                    if(modInputs.isDoubleLayer && modInputs.wvtrSecondary > 0) {
+                        effWVTR = (modInputs.wvtrPrimary * modInputs.wvtrSecondary)/(modInputs.wvtrPrimary+modInputs.wvtrSecondary);
+                    }
+                    
+                    const modParams = adjustGABParams(gabParamsBase, modInputs.temp, 25, modInputs.dHc, modInputs.dHk);
+                    const mInput = { ...modInputs, effectiveWVTR_Ref: effWVTR };
+                    const resM = calculateMoistureShelfLife(mInput, modParams, 0); 
+                    const resOx = calculateOxidationShelfLife(modInputs.temp, oxParams, 0);
+                    
+                    if (resM.val === Infinity) return resOx ? resOx.val : Infinity;
+                    return resOx ? Math.min(resM.val, resOx.val) : resM.val;
+                };
+
+                const baseVal = finalShelfLife;
+                const factors = [
+                    { key: 'temp', name: 'Temp (+/- 5°C)', delta: 5, isAbs: true },
+                    { key: 'rh', name: 'RH (+/- 10%)', delta: 10, isAbs: true },
+                    { key: 'wvtrPrimary', name: 'WVTR (+/- 20%)', delta: 0.2, isAbs: false },
+                    { key: 'A', name: 'Area (+/- 20%)', delta: 0.2, isAbs: false },
+                ];
+
+                return factors.map(f => {
+                    const val = numericInputs[f.key];
+                    const lowVal = f.isAbs ? val - f.delta : val * (1 - f.delta);
+                    const highVal = f.isAbs ? val + f.delta : val * (1 + f.delta);
+                    const resLow = runCalc({ ...numericInputs, [f.key]: lowVal });
+                    const resHigh = runCalc({ ...numericInputs, [f.key]: highVal });
+                    
+                    if (resLow === Infinity || resHigh === Infinity) return { name: f.name, low: 0, high: 0, range: 0 }; 
+
+                    const changeLow = ((resLow - baseVal) / baseVal) * 100;
+                    const changeHigh = ((resHigh - baseVal) / baseVal) * 100;
+                    const range = Math.abs(changeHigh - changeLow);
+                    return { name: f.name, low: changeLow, high: changeHigh, range: range };
+                }).sort((a,b) => b.range - a.range);
+
+            }, [numericInputs, finalShelfLife, gabParamsBase, oxParams]);
+
+            const simulationResults = useMemo(() => {
+                if (!showSim) return null;
+                const parsedSteps = simSteps.map(s => ({
+                    temp: parseFloat(s.temp) || 0,
+                    rh: parseFloat(s.rh) || 0,
+                    days: parseFloat(s.days) || 0
+                }));
+                return simulateCycling(parsedSteps, numericInputs, gabParamsBase, oxParams);
+            }, [showSim, simSteps, numericInputs, gabParamsBase, oxParams]);
+
+            const mcResults = useMemo(() => {
+                if (!showMonteCarlo || !finalShelfLife || finalShelfLife === Infinity) return null;
+                return runMonteCarlo(
+                    { ...numericInputs, effectiveWVTR_Ref },
+                    gabParamsBase, 
+                    oxParams, 
+                    2000,
+                    mcVariability
+                );
+            }, [showMonteCarlo, numericInputs, effectiveWVTR_Ref, gabParamsBase, oxParams, mcVariability]);
+
+            const handleInputChange = (e) => {
+                const { name, value, type, checked } = e.target;
+                setInputs(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
+            };
+            const handleCustomGABChange = (e) => {
+                const { name, value } = e.target;
+                setCustomGAB(prev => ({ ...prev, [name]: value }));
+            };
+            const handleCustomOxChange = (e) => {
+                const { name, value } = e.target;
+                setCustomOx(prev => ({ ...prev, [name]: value }));
+            };
+            const handleMcVarChange = (e) => {
+                const { name, value } = e.target;
+                setMcVariability(prev => ({ ...prev, [name]: parseFloat(value) || 0 }));
+            };
+            const handleReportMetaChange = (e) => {
+                const { name, value } = e.target;
+                setReportMeta(prev => ({ ...prev, [name]: value }));
+            };
+            const applySuggestedAwc = () => {
+                if (isothermAnalysis?.suggestion) {
+                    setInputs(prev => ({ ...prev, awc: parseFloat(isothermAnalysis.suggestion.toFixed(2)) }));
+                }
+            };
+            
+            const generatePDF = async () => {
+                setIsExporting(true);
+                setShowReportModal(false); 
+                await new Promise(r => setTimeout(r, 100));
+
+                try {
+                    const { jsPDF } = window.jspdf;
+                    const doc = new jsPDF('p', 'mm', 'a4');
+                    let y = 20;
+                    const padding = 15;
+                    const lineSpacing = 6;
+                    const col1 = padding + 5;
+                    const col2 = padding + 80;
+
+                    doc.setFont("helvetica", "bold");
+                    doc.setFontSize(22);
+                    doc.setTextColor(5, 150, 105);
+                    doc.text("Shelf Life Analysis Report", padding, y);
+                    y += 10;
+                    
+                    doc.setFontSize(10);
+                    doc.setTextColor(100);
+                    doc.setFont("helvetica", "normal");
+                    doc.text(`Generated: ${new Date().toLocaleString()}`, padding, y);
+                    y += 8;
+                    
+                    if (reportMeta.productName || reportMeta.productId) {
+                        doc.setFont("helvetica", "bold");
+                        doc.text(`Product: ${reportMeta.productName} ${reportMeta.productId ? `(ID: ${reportMeta.productId})` : ''}`, padding, y);
+                        doc.setFont("helvetica", "normal");
+                        y += 8;
+                    }
+                    if (reportMeta.notes) {
+                         doc.setFont("helvetica", "italic");
+                         const splitNotes = doc.splitTextToSize(`Notes: ${reportMeta.notes}`, 180);
+                         doc.text(splitNotes, padding, y);
+                         y += (splitNotes.length * 6) + 5;
+                         doc.setFont("helvetica", "normal");
+                    } else {
+                        y += 5;
+                    }
+
+                    doc.setFont("helvetica", "bold");
+                    doc.setFontSize(14);
+                    doc.setTextColor(50);
+                    doc.text("1. Configuration Parameters", padding, y);
+                    y += 8;
+
+                    doc.setFontSize(10);
+                    doc.setFont("helvetica", "normal");
+                    
+                    const configData = [
+                        ["Category", `${CATEGORY_NAMES[category] || category}`],
+                        ["Temperature", `${inputs.temp} °C`],
+                        ["Relative Humidity", `${inputs.rh} %`],
+                        ["Initial aw (aw0)", `${inputs.aw0}`],
+                        ["Critical aw (awc)", `${inputs.awc}`],
+                        ["Dry Weight", `${inputs.Ws} g`],
+                        ["Surface Area", `${inputs.A} m²`],
+                        ["Effective WVTR", `${effectiveWVTR_Ref.toFixed(3)} g/m².day`],
+                        ["Packaging Layers", inputs.isDoubleLayer ? "Double" : "Single"]
+                    ];
+
+                    configData.forEach(([label, value]) => {
+                        doc.text(`${label}:`, col1, y);
+                        doc.text(String(value), col2, y);
+                        y += lineSpacing;
+                    });
+                    y += 5;
+
+                    doc.setFont("helvetica", "bold");
+                    doc.setFontSize(14);
+                    doc.text("2. Prediction Results", padding, y);
+                    y += 8;
+
+                    doc.setFontSize(11);
+                    doc.setFont("helvetica", "bold");
+                    doc.setTextColor(0);
+                    
+                    const shelfLifeText = (finalShelfLife !== null && finalShelfLife !== Infinity) 
+                        ? `${Math.round(finalShelfLife)} days` 
+                        : (finalShelfLife === Infinity ? 'Indefinite' : '---');
+                    
+                    doc.text(`Estimated Shelf Life:  ${shelfLifeText}`, col1, y);
+                    y += lineSpacing;
+                    
+                    doc.setFontSize(10);
+                    doc.setFont("helvetica", "normal");
+                    doc.setTextColor(50);
+                    doc.text(`Limiting Factor: ${limitingFactor}`, col1, y);
+                    y += lineSpacing;
+
+                    if (shelfLifeRange && finalShelfLife !== Infinity) {
+                        doc.text(`95% Confidence Interval: ${Math.round(shelfLifeRange[0])} - ${Math.round(shelfLifeRange[1])} days`, col1, y);
+                        y += lineSpacing;
+                    }
+                    y += 10;
+                    
+                    const paramsEl = document.getElementById('model-params-container');
+                    if (paramsEl) {
+                        try {
+                            const canvas = await window.html2canvas(paramsEl, { scale: 2, backgroundColor: '#ffffff' });
+                            const imgData = canvas.toDataURL('image/png');
+                            const imgProps = doc.getImageProperties(imgData);
+                            const pdfWidth = 180;
+                            const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+
+                            if (y + pdfHeight > 280) { doc.addPage(); y = 20; }
+                            
+                            doc.setFont("helvetica", "bold");
+                            doc.setFontSize(12);
+                            doc.text("Model Parameters", padding, y);
+                            y += 5;
+                            doc.addImage(imgData, 'PNG', padding, y, pdfWidth, pdfHeight);
+                            y += pdfHeight + 10;
+                        } catch (err) { console.error("Params capture failed", err); }
+                    }
+
+                    const gabChartEl = document.getElementById('gab-chart-container');
+                    if (gabChartEl) {
+                        try {
+                            const canvas = await window.html2canvas(gabChartEl, { scale: 2, backgroundColor: '#ffffff' });
+                            const imgData = canvas.toDataURL('image/png');
+                            const imgProps = doc.getImageProperties(imgData);
+                            const pdfWidth = 180;
+                            const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+                            
+                            if (y + pdfHeight > 280) { doc.addPage(); y = 20; }
+                            
+                            doc.setFont("helvetica", "bold");
+                            doc.setFontSize(12);
+                            doc.text("Moisture Sorption Isotherm", padding, y);
+                            y += 5;
+                            doc.addImage(imgData, 'PNG', padding, y, pdfWidth, pdfHeight);
+                            y += pdfHeight + 10;
+                        } catch (err) { console.error("GAB Chart capture failed", err); }
+                    }
+
+                    const linChartEl = document.getElementById('lin-chart-container');
+                    if (linChartEl) {
+                        try {
+                            const canvas = await window.html2canvas(linChartEl, { scale: 2, backgroundColor: '#ffffff' });
+                            const imgData = canvas.toDataURL('image/png');
+                            const imgProps = doc.getImageProperties(imgData);
+                            const pdfWidth = 85; 
+                            const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+
+                            if (y + pdfHeight > 280) { doc.addPage(); y = 20; }
+
+                            doc.setFont("helvetica", "bold");
+                            doc.setFontSize(12);
+                            doc.text("Linearized Isotherm", padding, y);
+                            y += 5;
+                            doc.addImage(imgData, 'PNG', padding, y, pdfWidth, pdfHeight);
+                            y += pdfHeight + 10;
+                        } catch (err) { console.error("Lin Chart capture failed", err); }
+                    }
+
+                    const oxChartEl = document.getElementById('ox-chart-container');
+                    if (oxChartEl) {
+                        try {
+                            const canvas = await window.html2canvas(oxChartEl, { scale: 2, backgroundColor: '#ffffff' });
+                            const imgData = canvas.toDataURL('image/png');
+                            const imgProps = doc.getImageProperties(imgData);
+                            const pdfWidth = 85;
+                            const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+                             
+                            if (y + pdfHeight > 280) { doc.addPage(); y = 20; }
+                            
+                            doc.setFont("helvetica", "bold");
+                            doc.setFontSize(12);
+                            doc.text("Oxidation Sensitivity", padding, y);
+                            y += 5;
+                            doc.addImage(imgData, 'PNG', padding, y, pdfWidth, pdfHeight);
+                            y += pdfHeight + 10;
+                        } catch (err) { console.error("Ox Chart capture failed", err); }
+                    }
+                    
+                    const sensChartEl = document.getElementById('sensitivity-chart-container');
+                    if (sensChartEl) {
+                        try {
+                             const canvas = await window.html2canvas(sensChartEl, { scale: 2, backgroundColor: '#ffffff' });
+                             const imgData = canvas.toDataURL('image/png');
+                             const imgProps = doc.getImageProperties(imgData);
+                             const pdfWidth = 180;
+                             const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+                             
+                             if (y + pdfHeight > 280) { doc.addPage(); y = 20; }
+                             
+                             doc.setFont("helvetica", "bold");
+                             doc.setFontSize(12);
+                             doc.text("Sensitivity Analysis", padding, y);
+                             y += 5;
+                             doc.addImage(imgData, 'PNG', padding, y, pdfWidth, pdfHeight);
+                             y += pdfHeight + 10;
+                        } catch(err) { console.error("Sens Chart capture failed", err); }
+                    }
+
+                    doc.save(`ShelfLife_Report_${new Date().toISOString().slice(0,10)}.pdf`);
+
+                } catch (err) {
+                    console.error("Export failed:", err);
+                    alert("Failed to generate PDF. See console for details.");
+                } finally {
+                    setIsExporting(false);
+                }
+            };
+            
+            const openReportModal = () => {
+                setReportMeta({ productName: '', productId: '', notes: '' }); 
+                setShowReportModal(true);
+            };
+            
+            const updateSimStep = (idx, field, val) => {
+                setSimSteps(prev => {
+                    const newSteps = [...prev];
+                    newSteps[idx] = { ...newSteps[idx], [field]: val };
+                    return newSteps;
+                });
+            };
+            const addSimStep = () => setSimSteps([...simSteps, { temp: 25, rh: 60, days: 30 }]);
+            const removeSimStep = (idx) => setSimSteps(simSteps.filter((_, i) => i !== idx));
+
+            const toggleCompare = () => {
+                if (!compareMode) {
+                    setBaselineInputs({...inputs});
+                    setBaselineCategory(category);
+                    setCompareMode(true);
+                } else {
+                    setCompareMode(false);
+                    setBaselineInputs(null);
+                    setBaselineCategory(null);
+                }
+            };
+
+            const saveConfig = () => {
+                const config = {
+                    version: "3.2.0",
+                    date: new Date().toISOString(),
+                    category,
+                    inputs,
+                    customGAB,
+                    customOx
+                };
+                const blob = new Blob([JSON.stringify(config, null, 2)], {type : 'application/json'});
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `shelf-life-config-${new Date().toISOString().slice(0,10)}.json`;
+                link.click();
+            };
+
+            const loadConfig = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    try {
+                        const config = JSON.parse(evt.target.result);
+                        if (config.category) setCategory(config.category);
+                        if (config.inputs) setInputs(config.inputs);
+                        if (config.customGAB) setCustomGAB(config.customGAB);
+                        if (config.customOx) setCustomOx(config.customOx);
+                    } catch(err) {
+                        alert("Invalid Config File");
+                    }
+                };
+                reader.readAsText(file);
+            };
+
+            const gabChartData = useMemo(() => {
+                if (!gabParams) return [];
+                const bandWidth = 2 * (gabRMSE || 0.005);
+                const data = [];
+                for (let aw = 0.05; aw <= 0.95; aw += 0.05) {
+                    const m = calculateGABMoisture(aw, gabParams);
+                    const lin = m > 0 ? aw / m : 0;
+                    
+                    let baseM = null;
+                    if (baselineResults) {
+                        baseM = calculateGABMoisture(aw, baselineResults.params);
+                    }
+
+                    data.push({ 
+                        aw: parseFloat(aw.toFixed(2)), 
+                        moisture: m, 
+                        baseMoisture: baseM, 
+                        m_range: [Math.max(0, m - bandWidth), m + bandWidth], 
+                        linearized: lin, 
+                        lin_range: [Math.max(0, lin - 0.5), lin + 0.5] 
+                    });
+                }
+                return data;
+            }, [gabParams, gabRMSE, baselineResults]);
+
+            const oxChartData = useMemo(() => {
+                if (!oxParams) return [];
+                const data = [];
+                const bandWidth = 2 * (oxRMSE || 1);
+                const center = numericInputs.temp;
+                for (let t = Math.max(0, center - 15); t <= center + 15; t += 2) {
+                    const res = calculateOxidationShelfLife(t, oxParams, 0); 
+                    let baseDays = null;
+                    if (baselineResults && baselineResults.oxParams) {
+                        const bRes = calculateOxidationShelfLife(t, baselineResults.oxParams, 0);
+                        if (bRes) baseDays = bRes.val;
+                    }
+                    if (res) {
+                        data.push({ 
+                            temp: t, 
+                            days: res.val, 
+                            baseDays: baseDays,
+                            range: [Math.max(0, res.val - bandWidth), res.val + bandWidth] 
+                        });
+                    }
+                }
+                return data;
+            }, [oxParams, numericInputs.temp, oxRMSE, baselineResults]);
+
+            const customPoints = useMemo(() => {
+                if (!expDataInput) return [];
+                return expDataInput.split('\n').map(line => {
+                    const parts = line.split(/[,\t\s]+/).filter(Boolean);
+                    if (parts.length < 2) return null;
+                    const aw = parseFloat(parts[0]);
+                    const m = parseFloat(parts[1]);
+                    if (isNaN(aw) || isNaN(m)) return null;
+                    const lin = m > 0 ? aw / m : null;
+                    return { aw, moisture: m, linearized: lin };
+                }).filter(p => p !== null);
+            }, [expDataInput]);
+
+            const expDataAnalysis = useMemo(() => {
+                if (customPoints.length === 0 || !gabParams) return null;
+                const newRMSE = calculateRMSE(calculateGABMoisture, customPoints, 'aw', 'moisture', gabParams);
+                
+                let ratio = 0;
+                let status = 'Unknown';
+                let statusColor = 'text-slate-600';
+
+                if (gabRMSE > 0) {
+                    ratio = newRMSE / gabRMSE;
+                    if (ratio <= 1.2) { status = 'Consistent'; statusColor = 'text-emerald-600'; }
+                    else if (ratio <= 2.5) { status = 'Minor Deviation'; statusColor = 'text-yellow-600'; }
+                    else { status = 'Deviation Detected'; statusColor = 'text-red-600'; }
+                } else {
+                    status = 'Assessed';
+                }
+
+                return { rmse: newRMSE, ratio, status, statusColor };
+            }, [customPoints, gabParams, gabRMSE]);
+
+            // --- RENDER ---
+            return (
+                <div className="min-h-screen pb-12 print:bg-white">
+                    {/* Header */}
+                    <header className="bg-emerald-700 text-white p-6 shadow-md no-print">
+                        <div className="max-w-6xl mx-auto flex items-center justify-between">
+                            <div>
+                                <h1 className="text-2xl font-bold flex items-center gap-2"><Activity className="w-6 h-6" /> ShelfLife Predictor Pro</h1>
+                                <p className="text-emerald-100 text-sm mt-1">Integrated Moisture & Oxidation Modelling System</p>
+                            </div>
+                            <div className="text-right flex items-center gap-4">
+                                <div className="hidden sm:block text-xs opacity-70"><p>GAB + Arrhenius</p><p>v6.2.0 (Stable Layout)</p></div>
+                                <button onClick={() => setShowMonteCarlo(true)} className="bg-white/20 hover:bg-white/30 text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2"><Sigma className="w-4 h-4" /> Risk</button>
+                                <button onClick={() => setShowSim(true)} className="bg-white/20 hover:bg-white/30 text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2"><GitMerge className="w-4 h-4" /> Sim</button>
+                                <button 
+                                    onClick={openReportModal} 
+                                    disabled={isExporting}
+                                    className={`bg-white/20 hover:bg-white/30 text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-all ${isExporting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                >
+                                    <Download className="w-4 h-4" /> Report
+                                </button>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Report Header (Print only fallback) */}
+                    <div className="hidden print:block mb-6 border-b pb-4 px-6 pt-6">
+                        <h1 className="text-2xl font-bold text-slate-800">Shelf Life Prediction Report</h1>
+                        <p className="text-slate-500 text-sm">Generated on {new Date().toLocaleDateString()}</p>
+                    </div>
+
+                    <main className="max-w-6xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 print:block">
+                        
+                        {/* LEFT COLUMN */}
+                        <div className="lg:col-span-4 space-y-6 print:mb-6">
+                            
+                            {/* Data Mgmt */}
+                            <section className="bg-slate-800 text-white rounded-xl shadow-sm p-4 no-print">
+                                <h2 className="text-sm font-bold mb-3 flex items-center gap-2"><Save className="w-4 h-4 text-emerald-400"/> Data Management</h2>
+                                <div className="flex flex-wrap gap-2">
+                                    <button onClick={saveConfig} className="flex-1 bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded text-xs flex items-center justify-center gap-1 transition"><Save className="w-3 h-3"/> Save JSON</button>
+                                    <label className="flex-1 bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded text-xs flex items-center justify-center gap-1 cursor-pointer transition">
+                                        <Upload className="w-3 h-3"/> Load JSON
+                                        <input type="file" accept=".json" onChange={loadConfig} className="hidden" />
+                                    </label>
+                                </div>
+                                <button 
+                                    onClick={toggleCompare}
+                                    className={`mt-3 w-full px-3 py-2 rounded text-xs font-bold flex items-center justify-center gap-2 transition ${compareMode ? 'bg-orange-500 hover:bg-orange-600' : 'bg-emerald-600 hover:bg-emerald-500'}`}
+                                >
+                                    {compareMode ? <><Trash2 className="w-3 h-3"/> Clear Comparison</> : <><Copy className="w-3 h-3"/> Compare Scenario</>}
+                                </button>
+                                {compareMode && <div className="mt-2 text-[10px] text-orange-200 text-center">Baseline Locked. Change inputs to compare.</div>}
+                            </section>
+
+                            {/* Category */}
+                            <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+                                <h2 className="text-lg font-semibold flex items-center gap-2 mb-4 text-slate-700"><Box className="w-5 h-5 text-emerald-600" /> Product Category</h2>
+                                <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 outline-none mb-2">
+                                    {CATEGORIES.map(cat => (<option key={cat} value={cat}>{cat} - {CATEGORY_NAMES[cat] || 'Unknown'}</option>))}
+                                </select>
+                                {category === 'Custom' && (
+                                <div className="border-t pt-4 space-y-4">
+                                    <div className="bg-blue-50 p-2 rounded border border-blue-100"><h3 className="text-xs font-bold text-blue-800 mb-1">Custom GAB</h3>
+                                        <div className="grid grid-cols-3 gap-1">
+                                            {['Wm','C','K'].map(k=><div key={k}><label className="text-[10px]">{k}</label><input type="number" step="0.01" name={k} value={customGAB[k]} onChange={handleCustomGABChange} className="w-full text-xs p-1 border rounded"/></div>)}
+                                        </div>
+                                    </div>
+                                    <div className="bg-orange-50 p-2 rounded border border-orange-100"><h3 className="text-xs font-bold text-orange-800 mb-1">Custom Ox</h3>
+                                        <div className="grid grid-cols-2 gap-1">
+                                            {['Ea','k0'].map(k=><div key={k}><label className="text-[10px]">{k}</label><input type="number" name={k} value={customOx[k]} onChange={handleCustomOxChange} className="w-full text-xs p-1 border rounded"/></div>)}
+                                        </div>
+                                    </div>
+                                </div>
+                                )}
+                            </section>
+
+                            {/* Conditions */}
+                            <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+                                <h2 className="text-lg font-semibold flex items-center gap-2 mb-4 text-slate-700"><Thermometer className="w-5 h-5 text-rose-500" /> Storage Conditions</h2>
+                                <div className="space-y-4">
+                                <div><label className="block text-sm text-slate-600 mb-1">Temp (°C)</label><input type="number" name="temp" value={inputs.temp} onChange={handleInputChange} className="w-full border rounded p-2"/></div>
+                                <div><label className="block text-sm text-slate-600 mb-1">RH (%)</label><div className="flex gap-2"><input type="range" min="0" max="100" name="rh" value={inputs.rh} onChange={handleInputChange} className="w-full h-2 bg-slate-200 rounded-lg cursor-pointer no-print"/><input type="number" name="rh" value={inputs.rh} onChange={handleInputChange} className="w-16 border rounded p-2 text-center"/></div></div>
+                                </div>
+                            </section>
+
+                            {/* Packaging */}
+                            <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+                                <h2 className="text-lg font-semibold flex items-center gap-2 mb-4 text-slate-700"><Settings className="w-5 h-5 text-indigo-500" /> Product & Packaging</h2>
+                                <div className="space-y-4">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div><label className="block text-xs text-slate-500">Dry Wt (g)</label><input type="number" name="Ws" value={inputs.Ws} onChange={handleInputChange} className="w-full border rounded p-2 text-sm"/></div>
+                                        <div><label className="block text-xs text-slate-500">Area (m²)</label><input type="number" name="A" step="0.01" value={inputs.A} onChange={handleInputChange} className="w-full border rounded p-2 text-sm"/></div>
+                                    </div>
+                                    
+                                    {/* Advanced Kinetics Toggle */}
+                                    <div className="bg-indigo-50 rounded-lg p-2 border border-indigo-100 no-print">
+                                        <div className="flex items-center justify-between cursor-pointer" onClick={() => setShowAdvancedKinetics(!showAdvancedKinetics)}>
+                                            <div className="flex items-center gap-2">
+                                                <FlaskConical className="w-4 h-4 text-indigo-600" />
+                                                <span className="text-xs font-bold text-indigo-800">Advanced Kinetics</span>
+                                            </div>
+                                            <ChevronRight className={`w-4 h-4 text-indigo-400 transition-transform ${showAdvancedKinetics ? 'rotate-90' : ''}`} />
+                                        </div>
+                                        
+                                        {showAdvancedKinetics && (
+                                        <div className="mt-3 space-y-3 border-t border-indigo-200 pt-2 animate-in fade-in">
+                                            <div><label className="block text-xs font-medium text-slate-500 mb-1">WVTR Ref Temp (°C)</label><input type="number" name="wvtrRefTemp" value={inputs.wvtrRefTemp} onChange={handleInputChange} className="w-full border border-slate-300 rounded p-1 text-xs" /></div>
+                                            <div><label className="block text-xs font-medium text-slate-500 mb-1">Permeation Ea (kJ/mol)</label><input type="number" name="Ep" value={inputs.Ep} onChange={handleInputChange} className="w-full border border-slate-300 rounded p-1 text-xs" /></div>
+                                            <div className="pt-2 border-t border-indigo-100"><label className="block text-xs font-medium text-slate-500 mb-1">Isosteric Heat C (kJ/mol)</label><input type="number" name="dHc" value={inputs.dHc} onChange={handleInputChange} className="w-full border border-slate-300 rounded p-1 text-xs" /></div>
+                                            <div><label className="block text-xs font-medium text-slate-500 mb-1">Isosteric Heat K (kJ/mol)</label><input type="number" name="dHk" value={inputs.dHk} onChange={handleInputChange} className="w-full border border-slate-300 rounded p-1 text-xs" /></div>
+                                        </div>
+                                        )}
+                                    </div>
+
+                                    <div className="bg-slate-50 p-3 rounded border border-slate-200">
+                                        <div className="flex justify-between mb-2"><label className="text-xs font-bold text-slate-700">WVTR (g/m²d)</label><label className="flex items-center text-xs"><input type="checkbox" name="isDoubleLayer" checked={inputs.isDoubleLayer} onChange={handleInputChange} className="mr-1"/> Double Layer</label></div>
+                                        <div className="space-y-2">
+                                            <input type="number" name="wvtrPrimary" step="0.1" value={inputs.wvtrPrimary} onChange={handleInputChange} className="w-full border rounded p-1 text-sm" placeholder="Primary"/>
+                                            {inputs.isDoubleLayer && <input type="number" name="wvtrSecondary" step="0.1" value={inputs.wvtrSecondary} onChange={handleInputChange} className="w-full border rounded p-1 text-sm" placeholder="Secondary"/>}
+                                            <div className="flex justify-between pt-1 border-t text-xs"><span className="text-slate-500">Ref Temp:</span><span>{inputs.wvtrRefTemp}°C</span></div>
+                                            <div className="flex justify-between text-xs font-bold text-blue-700"><span>Adj @ {inputs.temp}°C:</span><span>{shelfLifeMoisture?.adjustedWVTR.toFixed(2)}</span></div>
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4 pt-2 border-t">
+                                        <div><label className="block text-xs text-slate-500">aw0</label><input type="number" name="aw0" step="0.01" max="1" value={inputs.aw0} onChange={handleInputChange} className="w-full border rounded p-2 text-sm"/></div>
+                                        <div><label className="block text-xs text-slate-500">awc</label><input type="number" name="awc" step="0.01" max="1" value={inputs.awc} onChange={handleInputChange} className="w-full border rounded p-2 text-sm"/></div>
+                                    </div>
+                                    {isothermAnalysis?.suggestion && (
+                                        <div className="mt-2 bg-yellow-50 border border-yellow-200 rounded p-2 flex gap-2 no-print"><Lightbulb className="w-4 h-4 text-yellow-600"/><div className="text-xs text-yellow-800">Peak at <b>{isothermAnalysis.suggestion.toFixed(2)}</b>. <button onClick={applySuggestedAwc} className="underline">Apply</button></div></div>
+                                    )}
+                                </div>
+                            </section>
+
+                            {/* Experimental Data */}
+                            <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 border-l-4 border-l-purple-500 no-print">
+                                <div className="flex items-center justify-between cursor-pointer" onClick={() => setShowExpData(!showExpData)}>
+                                    <h2 className="text-lg font-semibold flex items-center gap-2 text-slate-700"><FileText className="w-5 h-5 text-purple-600" /> Exp. Assessment</h2>
+                                    <ChevronRight className={`w-5 h-5 text-slate-400 transition-transform ${showExpData ? 'rotate-90' : ''}`} />
+                                </div>
+                                {showExpData && (
+                                <div className="mt-4 animate-in fade-in slide-in-from-top-2">
+                                    <p className="text-xs text-slate-500 mb-2">Paste experimental points (aw, moisture)</p>
+                                    <textarea value={expDataInput} onChange={(e) => setExpDataInput(e.target.value)} placeholder="0.30, 0.045&#10;0.50, 0.065" className="w-full h-24 border border-slate-300 rounded-lg p-2 text-xs font-mono mb-2" />
+                                    {expDataAnalysis && (
+                                        <div className="bg-slate-50 rounded p-3 border border-slate-200">
+                                            <div className="flex items-center justify-between mb-1"><span className="text-xs font-semibold text-slate-600">RMSE:</span><span className="text-xs font-bold">{expDataAnalysis.rmse.toFixed(4)}</span></div>
+                                            <div className="flex items-center justify-between pt-2 border-t border-slate-200 mt-2"><span className="text-xs font-semibold text-slate-600">Status:</span><span className={`text-xs font-bold flex items-center gap-1 ${expDataAnalysis.statusColor}`}>{expDataAnalysis.status === 'Consistent' ? <ClipboardCheck className="w-3 h-3"/> : <AlertTriangle className="w-3 h-3"/>} {expDataAnalysis.status}</span></div>
+                                        </div>
+                                    )}
+                                </div>
+                                )}
+                            </section>
+                            
+                            {/* Params Info - RESTORED TO LEFT */}
+                            <section id="model-params-container" className="bg-slate-50 p-4 rounded-lg border border-slate-200 text-xs text-slate-600 print:break-inside-avoid">
+                                <h4 className="font-bold mb-2 flex items-center gap-2"><Info className="w-3 h-3" /> Current Model Parameters</h4>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div><span className="font-semibold text-slate-700">Moisture (GAB):</span>{gabParamsBase ? <ul className="list-disc list-inside mt-1 space-y-0.5"><li>Wm: {gabParamsBase.Wm.toFixed(4)}</li><li>C: {gabParamsBase.C.toFixed(2)}</li><li>K: {gabParamsBase.K.toFixed(4)}</li><li className="text-blue-600">RMSE: {category === 'Custom' ? 'N/A' : gabRMSE.toFixed(4)}</li></ul> : <span className="ml-2 italic text-slate-400">Unavailable</span>}</div>
+                                    <div><span className="font-semibold text-slate-700">Oxidation (Arrhenius):</span>{oxParams ? <ul className="list-disc list-inside mt-1 space-y-0.5"><li>Ea: {oxParams.Ea.toLocaleString()}</li><li>k0: {oxParams.k0.toExponential(2)}</li><li className="text-orange-600">RMSE: {category === 'Custom' ? 'N/A' : oxRMSE.toFixed(1)} d</li></ul> : <span className="ml-2 italic text-slate-400">Unavailable</span>}</div>
+                                </div>
+                            </section>
+
+                            {/* Sensitivity - RESTORED TO LEFT */}
+                            <section id="sensitivity-chart-container" className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 print:break-inside-avoid">
+                                <h2 className="text-lg font-semibold flex items-center gap-2 mb-4 text-slate-700">
+                                    <RefreshCw className="w-5 h-5 text-pink-500" /> Sensitivity
+                                    <InfoTooltip text="Shows % impact on Shelf Life from a 10% change in each input. A longer bar means that variable is more critical to control." />
+                                </h2>
+                                <div className="h-48 w-full">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart layout="vertical" data={sensitivityData} margin={{top: 5, right: 30, left: 40, bottom: 5}}>
+                                        <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                                        <XAxis type="number" unit="%" hide />
+                                        <YAxis dataKey="name" type="category" width={80} style={{fontSize: '10px'}} />
+                                        <RechartsTooltip formatter={(val) => val.toFixed(1) + '%'} />
+                                        <ReferenceLine x={0} stroke="#000" />
+                                        <Bar dataKey="low" fill="#ef4444" barSize={15} />
+                                        <Bar dataKey="high" fill="#22c55e" barSize={15} />
+                                    </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </section>
+
+                        </div>
+
+                        {/* RIGHT COLUMN */}
+                        <div className="lg:col-span-8 space-y-6">
+                            
+                            {/* Main Result */}
+                            <section className="bg-white rounded-xl shadow-lg border-t-4 border-emerald-500 p-6 flex flex-col md:flex-row items-center justify-between gap-6 print:border">
+                                <div className="flex-1 text-center md:text-left">
+                                <h2 className="text-slate-500 font-medium uppercase tracking-wide text-sm mb-1">Estimated Shelf Life</h2>
+                                <div className="flex flex-col items-center md:items-start">
+                                    <div className="flex items-baseline gap-2"><span className="text-5xl font-bold text-slate-800">{finalShelfLife !== null && finalShelfLife !== Infinity ? Math.round(finalShelfLife) : '---'}</span><span className="text-xl text-slate-500">days</span></div>
+                                    {shelfLifeRange && finalShelfLife !== Infinity && <span className="text-xs font-semibold text-slate-400 mt-1">95% Conf: {Math.round(shelfLifeRange[0])} - {Math.round(shelfLifeRange[1])} days</span>}
+                                </div>
+                                <div className="mt-3 flex items-center gap-2 justify-center md:justify-start"><AlertTriangle className={`w-4 h-4 ${limitingFactor.includes('Moisture')?'text-blue-500':'text-orange-500'}`} /><span className="text-sm font-medium text-slate-600">Limiting: {limitingFactor}</span></div>
+                                {compareMode && baselineResults && (
+                                    <div className="mt-4 pt-3 border-t border-slate-200">
+                                        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Comparison vs Baseline</h3>
+                                        <div className="flex gap-4">
+                                            <div><span className="text-[10px] block text-slate-400">Baseline</span><span className="font-bold text-slate-600">{Math.round(baselineResults.val)} d</span></div>
+                                            <div><span className="text-[10px] block text-slate-400">Difference</span><span className={`font-bold ${finalShelfLife - baselineResults.val >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{finalShelfLife - baselineResults.val > 0 ? '+' : ''}{Math.round(finalShelfLife - baselineResults.val)} d</span></div>
+                                        </div>
+                                    </div>
+                                )}
+                                </div>
+                                <div className="flex flex-col gap-2 w-full md:w-auto min-w-[200px]">
+                                <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 flex justify-between items-center"><span className="text-xs text-blue-600 font-medium">Moisture Limit</span><span className="font-bold text-blue-800">{displayMoisture}</span></div>
+                                <div className="bg-orange-50 p-3 rounded-lg border border-orange-100 flex justify-between items-center"><span className="text-xs text-orange-600 font-medium">Oxidation Limit</span><span className="font-bold text-orange-800">{shelfLifeOxidation ? Math.round(shelfLifeOxidation.val)+' d' : 'N/A'}</span></div>
+                                </div>
+                            </section>
+
+                            {/* Charts */}
+                            <div id="gab-chart-container" className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 relative print:break-inside-avoid">
+                                <div className="h-64">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <ComposedChart data={gabChartData}>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                                            <XAxis dataKey="aw" type="number" domain={[0, 1]} label={{ value: 'aw', position: 'insideBottomRight', offset: -5 }} fontSize={12} />
+                                            <YAxis label={{ value: 'M (g/g)', angle: -90, position: 'insideLeft' }} fontSize={12} />
+                                            <RechartsTooltip formatter={(val) => typeof val==='number'?val.toFixed(4):null} />
+                                            <Area dataKey="m_range" stroke="none" fill="#bfdbfe" fillOpacity={0.3} />
+                                            {compareMode && <Line type="monotone" dataKey="baseMoisture" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={false} name="Baseline" />}
+                                            <Line type="monotone" dataKey="moisture" stroke="#3b82f6" strokeWidth={2} dot={false} name="Current" />
+                                            {customPoints.length > 0 && <Scatter data={customPoints} dataKey="moisture" fill="#dc2626" shape="cross" />}
+                                            <ReferenceLine x={numericInputs.aw0} stroke="#94a3b8" strokeDasharray="3 3" label="aw0" />
+                                            <ReferenceLine x={numericInputs.awc} stroke="#e11d48" strokeDasharray="3 3" label="awc" />
+                                        </ComposedChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 print:block print:space-y-6">
+                                <div id="lin-chart-container" className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 relative print:break-inside-avoid">
+                                    <div className="h-48">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <ComposedChart data={gabChartData}>
+                                                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                                                <XAxis dataKey="aw" type="number" domain={[0, 1]} fontSize={10} />
+                                                <YAxis label={{ value: 'aw/M', angle: -90, position: 'insideLeft' }} fontSize={10} domain={['auto','auto']} />
+                                                <Line type="monotone" dataKey="linearized" stroke="#8b5cf6" strokeWidth={2} dot={false} />
+                                                {isothermAnalysis?.suggestion && <ReferenceLine x={isothermAnalysis.suggestion} stroke="#eab308" label="Peak" />}
+                                            </ComposedChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                    <p className="text-center text-xs text-slate-400 mt-2">Linearized Isotherm (aw/M)</p>
+                                </div>
+                                <div id="ox-chart-container" className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 print:break-inside-avoid">
+                                    <div className="h-48">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <ComposedChart data={oxChartData}>
+                                                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                                                <XAxis dataKey="temp" fontSize={10} label={{value:'T', position:'insideBottom'}} />
+                                                <YAxis label={{ value: 'Days', angle: -90, position: 'insideLeft' }} fontSize={10} />
+                                                <Area dataKey="range" stroke="none" fill="#fdba74" fillOpacity={0.4} />
+                                                {compareMode && <Line type="monotone" dataKey="baseDays" stroke="#cbd5e1" strokeWidth={2} strokeDasharray="5 5" dot={false} />}
+                                                <Line type="monotone" dataKey="days" stroke="#f97316" strokeWidth={2} dot={false} />
+                                                {shelfLifeOxidation && <ReferenceDot x={numericInputs.temp} y={shelfLifeOxidation.val} r={4} fill="#f97316" />}
+                                            </ComposedChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                    <p className="text-center text-xs text-slate-400 mt-2">Oxidation Sensitivity</p>
+                                </div>
+                            </div>
+                        </div>
+                    </main>
+
+                    {/* MODALS */}
+                    {showReportModal && (
+                        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 print:hidden animate-in fade-in">
+                            <div className="bg-white rounded-xl w-full max-w-lg overflow-hidden shadow-2xl">
+                                <div className="bg-emerald-50 px-6 py-4 border-b border-emerald-100 flex justify-between items-center">
+                                    <h2 className="text-lg font-bold text-emerald-800 flex items-center gap-2"><Download className="w-5 h-5"/> Generate Report</h2>
+                                    <button onClick={() => setShowReportModal(false)} className="text-emerald-400 hover:text-emerald-700">✕</button>
+                                </div>
+                                <div className="p-6 space-y-4">
+                                    <p className="text-sm text-slate-500">Please provide optional details to include in the report header.</p>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-600 mb-1">Product Name</label>
+                                        <input type="text" name="productName" value={reportMeta.productName} onChange={handleReportMetaChange} placeholder="e.g. Spicy Cracker Prototype A" className="w-full p-2 border border-slate-300 rounded text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"/>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-600 mb-1">Product ID / Batch</label>
+                                        <input type="text" name="productId" value={reportMeta.productId} onChange={handleReportMetaChange} placeholder="e.g. 2024-X-99" className="w-full p-2 border border-slate-300 rounded text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"/>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-600 mb-1">Additional Notes</label>
+                                        <textarea name="notes" value={reportMeta.notes} onChange={handleReportMetaChange} placeholder="e.g. Test conditions were accelerated. Using Supplier B film." className="w-full p-2 border border-slate-300 rounded text-sm h-24 resize-none focus:ring-2 focus:ring-emerald-500 focus:outline-none"/>
+                                    </div>
+                                </div>
+                                <div className="bg-slate-50 px-6 py-4 flex justify-end gap-3 border-t border-slate-100">
+                                    <button onClick={() => setShowReportModal(false)} className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 transition">Cancel</button>
+                                    <button onClick={generatePDF} className="px-4 py-2 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded shadow-sm transition flex items-center gap-2">
+                                        <FileText className="w-4 h-4"/> Generate PDF
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* MODALS */}
+                    {showSim && (
+                        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 print:hidden">
+                            <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 shadow-2xl">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h2 className="text-xl font-bold flex items-center gap-2"><GitMerge className="w-6 h-6 text-purple-600"/> Cycling Simulation 
+                                        <InfoTooltip text="Simulate supply chain steps (e.g. Warehouse -> Truck -> Store). Calculates cumulative moisture gain and oxidation consumption." />
+                                    </h2>
+                                    <button onClick={() => setShowSim(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+                                </div>
+                                <div className="space-y-4">
+                                    <div className="bg-purple-50 p-4 rounded-lg border border-purple-100">
+                                        {simSteps.map((step, idx) => (
+                                            <div key={idx} className="flex gap-2 items-end mb-2">
+                                                <div className="w-8 font-bold text-purple-300">{idx+1}</div>
+                                                <div className="flex-1"><label className="text-[10px]">Temp</label><input type="number" value={step.temp} onChange={(e)=>updateSimStep(idx,'temp',e.target.value)} className="w-full p-1 border rounded text-sm"/></div>
+                                                <div className="flex-1"><label className="text-[10px]">RH</label><input type="number" value={step.rh} onChange={(e)=>updateSimStep(idx,'rh',e.target.value)} className="w-full p-1 border rounded text-sm"/></div>
+                                                <div className="flex-1"><label className="text-[10px]">Days</label><input type="number" value={step.days} onChange={(e)=>updateSimStep(idx,'days',e.target.value)} className="w-full p-1 border rounded text-sm"/></div>
+                                                <button onClick={()=>removeSimStep(idx)} className="text-red-400">✕</button>
+                                            </div>
+                                        ))}
+                                        <button onClick={addSimStep} className="mt-2 text-xs font-bold text-purple-600">+ Add Step</button>
+                                    </div>
+                                    {simulationResults && (
+                                        <div className="bg-slate-50 p-4 rounded-lg">
+                                            <div className="flex justify-between mb-4">
+                                                <h3 className="font-bold">Results</h3>
+                                                <span className={`px-3 py-1 rounded text-sm font-bold ${simulationResults.failed ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>{simulationResults.failed ? 'FAILED' : 'PASSED'}</span>
+                                            </div>
+                                            <div className="h-48 w-full">
+                                                <ResponsiveContainer>
+                                                    <LineChart data={simulationResults.history}>
+                                                        <CartesianGrid strokeDasharray="3 3" />
+                                                        <XAxis dataKey="day" fontSize={10} />
+                                                        <YAxis yAxisId="left" fontSize={10} domain={[0, 1]} label={{ value: 'aw', angle: -90, position: 'insideLeft' }}/>
+                                                        <YAxis yAxisId="right" orientation="right" fontSize={10} unit="%" />
+                                                        <RechartsTooltip 
+                                                            labelFormatter={(l)=>`Day ${l}`}
+                                                            formatter={(value, name) => typeof value === 'number' ? value.toFixed(3) : value}
+                                                        />
+                                                        <Line yAxisId="left" type="monotone" dataKey="aw" stroke="#3b82f6" dot={false} />
+                                                        <Line yAxisId="right" type="monotone" dataKey="ox" stroke="#f97316" dot={false} />
+                                                        <ReferenceLine yAxisId="left" y={inputs.awc} stroke="#e11d48" strokeDasharray="3 3" label="Crit aw" />
+                                                    </LineChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {showMonteCarlo && (
+                        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 print:hidden">
+                            <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 shadow-2xl">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h2 className="text-xl font-bold flex items-center gap-2"><Sigma className="w-6 h-6 text-pink-600"/> Risk Assessment 
+                                        <InfoTooltip text="Monte Carlo Simulation: Runs 2000 iterations varying inputs based on your settings to predict failure probability." />
+                                    </h2>
+                                    <button onClick={() => setShowMonteCarlo(false)} className="text-slate-400">✕</button>
+                                </div>
+                                <div className="space-y-6">
+                                    {/* Input variability configuration */}
+                                    <div className="bg-pink-50 p-4 rounded-lg border border-pink-100 grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-bold text-pink-800 mb-1">Temperature Variability (±°C)</label>
+                                            <input type="number" name="tempVar" value={mcVariability.tempVar} onChange={handleMcVarChange} className="w-full p-2 border rounded text-sm"/>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-pink-800 mb-1">RH Variability (±%)</label>
+                                            <input type="number" name="rhVar" value={mcVariability.rhVar} onChange={handleMcVarChange} className="w-full p-2 border rounded text-sm"/>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-pink-800 mb-1">WVTR Variability (±%)</label>
+                                            <input type="number" name="wvtrVar" value={mcVariability.wvtrVar} onChange={handleMcVarChange} className="w-full p-2 border rounded text-sm"/>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-pink-800 mb-1">Initial aw Variability (±Abs)</label>
+                                            <input type="number" step="0.01" name="aw0Var" value={mcVariability.aw0Var} onChange={handleMcVarChange} className="w-full p-2 border rounded text-sm"/>
+                                        </div>
+                                    </div>
+
+                                    {mcResults ? (
+                                        <div className="space-y-6">
+                                            <div className="grid grid-cols-3 gap-4 text-center">
+                                                <div className="p-3 bg-slate-50 rounded"><div className="text-xs font-bold text-slate-500">P10</div><div className="text-2xl font-bold">{Math.round(mcResults.p10)} d</div></div>
+                                                <div className="p-3 bg-emerald-50 rounded"><div className="text-xs font-bold text-emerald-600">P50</div><div className="text-2xl font-bold">{Math.round(mcResults.p50)} d</div></div>
+                                                <div className="p-3 bg-slate-50 rounded"><div className="text-xs font-bold text-slate-500">P90</div><div className="text-2xl font-bold">{Math.round(mcResults.p90)} d</div></div>
+                                            </div>
+                                            <div className="h-64 w-full">
+                                                <ResponsiveContainer>
+                                                    <BarChart data={mcResults.histogram}>
+                                                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                                                        <XAxis dataKey="range" fontSize={10} />
+                                                        <YAxis fontSize={10} />
+                                                        <RechartsTooltip />
+                                                        <Bar dataKey="count" fill="#db2777">
+                                                            {mcResults.histogram.map((entry, index) => <Cell key={`cell-${index}`} fillOpacity={0.6 + (entry.count / mcResults.count)*5} />)}
+                                                        </Bar>
+                                                    </BarChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        </div>
+                                    ) : <div>Calculating...</div>}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
